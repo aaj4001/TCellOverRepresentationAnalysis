@@ -41,6 +41,17 @@ OverRepresent_Results <- function(QueryDEGs, SignatureList, Universe){
   OverRep_Result = lapply(OverRep_Result, function(x) x %>% 
                             mutate(OddsRatio = sapply(strsplit(GeneRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))/
                                      sapply(strsplit(BgRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+  
+  ## Adds in pathways with zero overlap, sets p value for non-overlapping to 1, Odds Ratio to 0 and calculates FDR
+  OverRep_Result %<>% lapply(merge,y = names(SignatureList), by = 1, all.y = T)
+  OverRep_Result %<>% lapply(function(x) {
+    x$pvalue[is.na(x$Description)] = 1
+    x$OddsRatio[is.na(x$Description)] = 0
+    x %>% mutate(p.adjust = p.adjust(pvalue, method = "BH"),
+                 ID = factor(ID, names(SignatureList)))
+  })
+  
+  
   OverRep_Result
 }
 
@@ -53,14 +64,6 @@ OverRepresent_Plot <- function(QueryDEGs, SignatureList, Universe,
 
   OverRep_Result = OverRepresent_Results(QueryDEGs, SignatureList, Universe)
   
-  ## Adds in pathways with zero overlap, sets p value for non-overlapping to 1, Odds Ratio to 0 and calculates FDR
-  OverRep_Result %<>% lapply(merge,y = names(SignatureList), by = 1, all.y = T)
-  OverRep_Result %<>% lapply(function(x) {
-    x$pvalue[is.na(x$Description)] = 1
-    x$OddsRatio[is.na(x$Description)] = 0
-    x %>% mutate(p.adjust = p.adjust(pvalue, method = "BH"),
-                 ID = factor(ID, names(SignatureList)))
-  })
   
   OverRep_Result = lapply(seq_along(OverRep_Result),
                           function(i, List, Names) List[[i]] %>% 
@@ -77,26 +80,22 @@ OverRepresent_Plot <- function(QueryDEGs, SignatureList, Universe,
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,NA)) +
       scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      geom_point(size = 0)
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) 
   } else if (!is.null(UpperOddsRatio)&is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,NA)) +
       scale_color_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      geom_point(size = 0)
+      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) 
   } else if(is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,UpperPVal)) +
       scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      geom_point(size = 0)
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) 
   } else if(!is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,UpperPVal)) +
       scale_color_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      geom_point(size = 0)
+      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) 
   }  
   
   PicPlot = PicPlot + 
@@ -133,7 +132,7 @@ OverRepresent_MultiPlot <- function(QueryDEGs, Listof_SignatureLists, Universe,
                                     OverlapNumbers = TRUE,FlipVertical = FALSE){
   OverRep_Results = lapply(Listof_SignatureLists, OverRepresent_Results, QueryDEGs = QueryDEGs, Universe = Universe)
 
-  OverRep_Results %<>% unlist(recursive = F) %>% bind_rows() %>% subset(ID != "GeneUniverse")
+  OverRep_Results %<>% unlist(recursive = F) %>% bind_rows() %>% subset(p.adjust <= 0.05)
 
   if(is.null(UpperPVal)) UpperPVal = max(-log10(OverRep_Results$pvalue))
   if(is.null(UpperOddsRatio)) UpperOddsRatio = max(log2(OverRep_Results$OddsRatio))
@@ -160,6 +159,7 @@ OverRepresent_MultiPlot <- function(QueryDEGs, Listof_SignatureLists, Universe,
 ## Overrepresentation Analysis Use Case
 
 OverRepresent_Plot(Hacohen_DEGs, MurineSigs, HacohenAllGenes)
+
 OverRepresent_Plot(Hacohen_DEGs, YellowFever, HacohenAllGenes)
 
 ## Allows you to plot them together
