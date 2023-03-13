@@ -2,6 +2,7 @@ library(openxlsx)
 library(clusterProfiler)
 library(readr)
 library(magrittr)
+library(dplyr)
 library(ggplot2)
 library(cowplot)
 library(viridis)
@@ -9,205 +10,86 @@ library(viridis)
 ########################################################################################################################
 ## Imports Gene Sets (with Universe)
 
-Arrange_ForScoring <- function(SignatureList,AllGenes){
-  SigList_ForScoring = list()
-  for(i in 1:length(SignatureList)) SigList_ForScoring[[i]] = list(Signature = SignatureList[[i]],AllGenes = AllGenes)
-  names(SigList_ForScoring) = names(SignatureList)
-  
-  SigList_ForScoring
-}
-
 Hacohen_DEGs = msigdbi::read.gmt("Hacohen_StateDEGs_Human.gmt")$genesets
-HacohenAllGenes = clusterProfiler::read.gmt("Hacohen_AllGenes.gmt")
-
-Hacohen_DEGs = Arrange_ForScoring(Hacohen_DEGs,HacohenAllGenes)
+HacohenAllGenes = msigdbi::read.gmt("Hacohen_AllGenes.gmt")$genesets
 
 ## Imports Query Sets Figure 4A
 MurineSigs = msigdbi::read.gmt("MurineSigs.gmt")$genesets
 names(MurineSigs)[c(7,8)] = c("Act_Dys","Naive_Mem")
 
 YellowFever = msigdbi::read.gmt("HumanViralTCellsSigs.gmt")$genesets[c(3,4,7,8)]
-               
-
+     
+Test = read.gmt("MurineSigs.gmt")          
 ########################################################################################################################
 ## Overrepresentation Functions 
 
-ListtoPathway = function(InputList,AllGenes){
-  term = NULL
-  gene = NULL
-  for(i in 1:length(InputList)) {
-    term = c(term,rep(names(InputList)[i],length(InputList[[i]])))
-    gene = c(gene,InputList[[i]])
-  }
+
+OverRepresent_Results <- function(QueryDEGs, SignatureList, Universe){
+  ## Arranges SignatureList and Universe in right format for TERM2GENE
+  SigList = lapply(seq_along(SignatureList),function(i, Signatures, Names) {
+    data.frame(term = Names[i], gene = SignatureList[[i]])},
+    Signatures = SignatureList, Names = names(SignatureList)) %>%
+    bind_rows() %>% rbind(data.frame(term = "GeneUniverse",gene = Universe[[1]])) %>%
+    mutate(term = factor(term, levels = c(names(SignatureList), "GeneUniverse")))
   
-  PathwayOutput = data.frame(term,gene);rownames(PathwayOutput) = NULL
-  PathwayOutput$gene = as.character(PathwayOutput$gene)
+  ## Runs Overrepresentation Analysis
+  OverRep_Result = lapply(QueryDEGs,enricher,TERM2GENE = SigList, minGSSize = 1,
+                          maxGSSize = Inf,pvalueCutoff = 2,qvalueCutoff = 2)
   
-  PathwayOutput = rbind(PathwayOutput,AllGenes)
-  
-  PathwayOutput
+  ## Extracts Results and adds Odds Ratio
+  OverRep_Result = lapply(OverRep_Result, function(x) x@result)
+  OverRep_Result = lapply(OverRep_Result, function(x) x %>% 
+                            mutate(OddsRatio = sapply(strsplit(GeneRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))/
+                                     sapply(strsplit(BgRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))))
+  OverRep_Result
 }
 
-#InputSigList = Hacohen_DEGs;InputQueryList = YellowFever;i = 1
-## Overrepresentation Calculation
-OverRepresent_Results <- function(InputSigList, InputQueryList){
-  OverRepresent_Result = list()
-  for(i in 1:length(InputSigList)){
-    OverRepresent_Result[[i]] = enricher(InputSigList[[i]]$Signature,
-                                         TERM2GENE = ListtoPathway(InputQueryList,InputSigList[[i]]$AllGenes),
-                                         minGSSize = 1,maxGSSize = 10000,pvalueCutoff = 2,qvalueCutoff = 2)
-  }
-  
-  names(OverRepresent_Result) = names(InputSigList)
-  OverRepresent_Result
-}
 
-OverRepresent_Overlap <- function(InputSigList,InputQueryList){
-  MergedResults = matrix(nrow = length(InputSigList),ncol = length(InputQueryList))
-  OverRepresent_Result = OverRepresent_Results(InputSigList,InputQueryList)
-  
-  for(i in 1:length(InputSigList)){
-    if(!is.null(OverRepresent_Result[[i]])){
-      GeneRatio = OverRepresent_Result[[i]]@result[,c(1,9)]
-      Result = merge(data.frame(PathwayName = names(InputQueryList),sort = 1:length(InputQueryList)),
-                     GeneRatio,by = 1,all.x = TRUE)
-      Result = Result[order(Result$sort),]
-      MergedResults[i,] = as.character(Result$Count)
-    }
-  }
-  
-  rownames(MergedResults) = names(InputSigList);colnames(MergedResults) = names(InputQueryList)
-  MergedResults[is.na(MergedResults)] = ""
-  
-  MergedResults
-}
 
-OverRepresent_OverlapGenes <- function(InputSigList,InputQueryList){
-  MergedResults = matrix(nrow = length(InputSigList),ncol = length(InputQueryList))
-  OverRepresent_Result = OverRepresent_Results(InputSigList,InputQueryList)
-  
-  for(i in 1:length(InputSigList)){
-    if(!is.null(OverRepresent_Result[[i]])){
-      GeneOverlaps = OverRepresent_Result[[i]]@result[,c(1,8)]
-      Result = merge(data.frame(PathwayName = names(InputQueryList),sort = 1:length(InputQueryList)),
-                     GeneOverlaps,by = 1,all.x = TRUE)
-      Result = Result[order(Result$sort),]
-      MergedResults[i,] = Result$geneID
-    }
-  }
-  
-  rownames(MergedResults) = names(InputSigList);colnames(MergedResults) = names(InputQueryList)
-  MergedResults[is.na(MergedResults)] = "N/A"
-  
-  MergedResults
-}
+OverRepresent_Plot <- function(QueryDEGs, SignatureList, Universe,
+                               FDRCutoff = 0.05, MakeSquare = F,
+                               UpperPVal = NULL, UpperOddsRatio = NULL,
+                               OverlapNumbers = TRUE,FlipVertical = FALSE){
 
-OverRepresent_PVal <- function(InputSigList,InputQueryList){
-  MergedResults = matrix(nrow = length(InputSigList),ncol = length(InputQueryList))
-  OverRepresent_Result = OverRepresent_Results(InputSigList,InputQueryList)
+  OverRep_Result = OverRepresent_Results(QueryDEGs, SignatureList, Universe)
   
-  for(i in 1:length(InputSigList)){
-    if(!is.null(OverRepresent_Result[[i]])){
-      Pvalue = OverRepresent_Result[[i]]@result[,c(1,5)]
-      Result = merge(data.frame(PathwayName = names(InputQueryList),sort = 1:length(InputQueryList)),
-                     Pvalue,by = 1,all.x = TRUE)
-      Result = Result[order(Result$sort),]
-      MergedResults[i,] = Result$pvalue
-    }
-  }
+  ## Adds in pathways with zero overlap, sets p value for non-overlapping to 1, Odds Ratio to 0 and calculates FDR
+  OverRep_Result %<>% lapply(merge,y = names(SignatureList), by = 1, all.y = T)
+  OverRep_Result %<>% lapply(function(x) {
+    x$pvalue[is.na(x$Description)] = 1
+    x$OddsRatio[is.na(x$Description)] = 0
+    x %>% mutate(p.adjust = p.adjust(pvalue, method = "BH"),
+                 ID = factor(ID, names(SignatureList)))
+  })
   
-  rownames(MergedResults) = names(InputSigList);colnames(MergedResults) = names(InputQueryList)
-  MergedResults[is.na(MergedResults)] = 1.0
+  OverRep_Result = lapply(seq_along(OverRep_Result),
+                          function(i, List, Names) List[[i]] %>% 
+                            mutate(QueryDEG = Names[i]), 
+                          List = OverRep_Result, Names = names(OverRep_Result)) %>%
+    bind_rows() %>% mutate(QueryDEG = factor(QueryDEG, names(QueryDEGs)))
   
-  MergedResults
-}
-
-OverRepresent_OddsRatio <- function(InputSigList,InputQueryList){
-  MergedResults = matrix(nrow = length(InputSigList),ncol = length(InputQueryList))
-  OverRepresent_Result = OverRepresent_Results(InputSigList,InputQueryList)
+  ## Plots Enrichment (picnic plot)
   
-  for(i in 1:length(InputSigList)){
-    if(!is.null(OverRepresent_Result[[i]])){
-      GeneRatio = OverRepresent_Result[[i]]@result[,c(1,3)]
-      GeneRatio$GeneRatio = sapply(strsplit(GeneRatio$GeneRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))
-      
-      BgRatio = OverRepresent_Result[[i]]@result[,c(1,4)]
-      BgRatio$BgRatio = sapply(strsplit(BgRatio$BgRatio,split = "/",fixed = TRUE), function(x) as.numeric(x[1])/as.numeric(x[2]))
-      
-      OddsRatio = merge(GeneRatio,BgRatio,by = 1)
-      OddsRatio$OddsRatio = OddsRatio$GeneRatio/OddsRatio$BgRatio
-      
-      Result = merge(data.frame(PathwayName = names(InputQueryList),sort = 1:length(InputQueryList)),
-                     OddsRatio,by = 1,all.x = TRUE)
-      Result = Result[order(Result$sort),]
-      MergedResults[i,] = Result$OddsRatio
-    }
-  }  
-  
-  rownames(MergedResults) = names(InputSigList);colnames(MergedResults) = names(InputQueryList)
-  MergedResults[is.na(MergedResults)] = 0
-  MergedResults
-}
-
-# InputSigList = TOX_Sig[rev(1:2)];InputQueryList = MurineSigs;UpperOddsRatio = 6.1
-PicnicPlot <- function(InputSigList,InputQueryList,FDRCutoff = 0.05,
-                       UpperPVal = NULL, UpperOddsRatio = NULL,
-                       OverlapNumbers = TRUE,FlipVertical = FALSE){
-  InputFDRs = data.frame(OverRepresent_PVal(InputSigList,InputQueryList))
-  InputOddsRatios = data.frame(OverRepresent_OddsRatio(InputSigList,InputQueryList))
-  InputOddsRatios = log2(InputOddsRatios)
-  InputResults = InputFDRs
-  InputResults = -1*log10(InputResults)
-  InputOverlaps = data.frame(OverRepresent_Overlap(InputSigList,InputQueryList),stringsAsFactors = FALSE)
-  
-  ## FDR adjusts p value (groups by row)
-  for(i in 1:nrow(InputFDRs)) InputFDRs[i,] = p.adjust(InputFDRs[i,],method = "BH")
-  
-  Ordering = names(InputSigList)
-  
-  ## Merges both results together
-  InputResults$TCellState_Sigs = rownames(InputFDRs)
-  InputFDRs$TCellState_Sigs = rownames(InputFDRs)
-  InputOddsRatios$TCellState_Sigs = rownames(InputFDRs)
-  InputOverlaps$TCellState_Sigs = rownames(InputFDRs)
-  
-  
-  InputResults = reshape2::melt(InputResults,id.vars = "TCellState_Sigs",variable.name = "Test_Signatures",value.name = "neglog10_pval")
-  InputFDRs = reshape2::melt(InputFDRs,id.vars = "TCellState_Sigs",variable.name = "Test_Signatures",value.name = "p.adj")
-  InputOddsRatios = reshape2::melt(InputOddsRatios,id.vars = "TCellState_Sigs",variable.name = "Test_Signatures",value.name = "log2_OddsRatio")
-  InputOverlaps = reshape2::melt(InputOverlaps,id.vars = "TCellState_Sigs",variable.name = "Test_Signatures",value.name = "Overlap")
-  
-  InputResults$Merger = paste(InputResults$TCellState_Sigs,InputResults$Test_Signatures,sep = "_")
-  InputFDRs$Merger = paste(InputFDRs$TCellState_Sigs,InputFDRs$Test_Signatures,sep = "_");InputFDRs = InputFDRs[,-(1:2)]
-  InputOddsRatios$Merger = paste(InputOddsRatios$TCellState_Sigs,InputOddsRatios$Test_Signatures,sep = "_");InputOddsRatios = InputOddsRatios[,-(1:2)]
-  InputOverlaps$Merger = paste(InputOverlaps$TCellState_Sigs,InputOverlaps$Test_Signatures,sep = "_");InputOverlaps = InputOverlaps[,-(1:2)]
-  
-  InputResults = merge(InputResults,InputFDRs,by.x = 4,by.y = 2)
-  InputResults = merge(InputResults,InputOddsRatios,by.x = 1,by.y = 2)
-  InputResults = merge(InputResults,InputOverlaps,by.x = 1,by.y = 2)[,-1]
-  
-  InputResults$TCellState_Sigs = factor(InputResults$TCellState_Sigs,levels = Ordering)
-  InputResults$Test_Signatures = factor(InputResults$Test_Signatures, levels= names(InputQueryList))
-  InputResults$Sig = "ns"
-  InputResults$Sig[InputResults$p.adj < FDRCutoff] = "sig"
-
-  PicPlot = ggplot(InputResults,aes(x = Test_Signatures,y = TCellState_Sigs,color = log2_OddsRatio,fill = log2_OddsRatio,size = neglog10_pval))
+  PicPlot = ggplot(OverRep_Result,aes(x = ID,y = QueryDEG,
+                                      color = log2(OddsRatio),fill = log2(OddsRatio),size = -log10(pvalue)))
 
   if(is.null(UpperOddsRatio)&is.null(UpperPVal)){
     PicPlot = PicPlot +
-      scale_color_viridis(option = "plasma",direction = -1) +
-      scale_fill_viridis(option = "plasma",direction = -1) +
+      scale_size_continuous(limits = c(0,NA)) +
+      scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
       geom_point(size = 0)
   } else if (!is.null(UpperOddsRatio)&is.null(UpperPVal)){
     PicPlot = PicPlot +
+      scale_size_continuous(limits = c(0,NA)) +
       scale_color_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
       scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
       geom_point(size = 0)
   } else if(is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,UpperPVal)) +
-      scale_color_viridis(option = "plasma",direction = -1) +
-      scale_fill_viridis(option = "plasma",direction = -1) +
+      scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
       geom_point(size = 0)
   } else if(!is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
@@ -216,72 +98,67 @@ PicnicPlot <- function(InputSigList,InputQueryList,FDRCutoff = 0.05,
       scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
       geom_point(size = 0)
   }  
-  LegPlot = PicPlot
+  
   PicPlot = PicPlot + 
-    geom_point(data = InputResults[InputResults$Sig == "ns",],color = "grey",fill = "grey",shape = 22) +
-    geom_point(data = InputResults[InputResults$Sig == "sig",],shape = 21) +
-    theme_bw() + 
-    # scale_x_discrete(position = "top") +
-    theme(axis.text.x = element_text(angle = 90,vjust =0.5,hjust = 1),axis.title = element_blank())
-    
-  LegPlot = LegPlot + 
-    geom_point() + 
-    theme_bw() + 
-    # scale_x_discrete(position = "top") +
-    theme(axis.text.x = element_text(angle = 90,vjust = 0.5, hjust=1),axis.title = element_blank())
+    geom_point(data = OverRep_Result %>% subset(p.adjust > FDRCutoff),color = "grey",fill = "grey",shape = 22,show.legend = F) +
+    geom_point(data = OverRep_Result %>% subset(p.adjust <= FDRCutoff)) +
+    theme_bw() + theme(axis.title = element_blank()) 
+  
   
   if(OverlapNumbers){
-    PicPlot = PicPlot + geom_text(aes(label = Overlap),data = InputResults[InputResults$Sig=="sig",],size = 2,color = "white")
-    LegPlot = LegPlot + geom_text(aes(label = Overlap),data = InputResults[InputResults$Sig=="sig",],size = 2,color = "white")
+    PicPlot = PicPlot + geom_text(aes(label = Count),data = OverRep_Result %>% subset(p.adjust <= FDRCutoff),size = 2,color = "white")
   }
   
   if(FlipVertical){
-    PicPlot = PicPlot + coord_flip() + 
-      scale_y_discrete(limits = rev(levels(InputResults$TCellState_Sigs)),position = "right") +
-      theme(axis.text.x = element_text(hjust = 0,vjust = 0.5)) +
-      scale_x_discrete(limits = rev(levels(InputResults$Test_Signatures)),position = "top")
-      
-    LegPlot = LegPlot + coord_flip() + 
-      scale_y_discrete(limits = rev(levels(InputResults$TCellState_Sigs)),position = "right") +
-      theme(axis.text.x = element_text(hjust = 0,vjust = 0.5)) +
-      scale_x_discrete(limits = rev(levels(InputResults$Test_Signatures)),position = "top")
+    PicPlot = PicPlot + scale_x_discrete(limits = rev) +
+      scale_y_discrete(position = "right") + 
+      coord_flip() + 
+      theme(axis.text.x = element_text(angle = 90, hjust = 0, vjust = 0.5),
+            legend.box = "horizontal")
+  } else{
+    PicPlot = PicPlot + scale_y_discrete(limits = rev) + 
+      theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+            legend.box = "vertical", legend.position = "top")
   }
   
-  Plots = list(PicnicPlot = PicPlot,LegendPlot = LegPlot)
-  Plots
+  if(MakeSquare & !FlipVertical) {PicPlot = PicPlot + theme(aspect.ratio = length(QueryDEGs)/length(SignatureList))
+  } else if(MakeSquare & FlipVertical) PicPlot = PicPlot + theme(aspect.ratio = length(SignatureList)/length(QueryDEGs))
+
+  PicPlot
 }
 
+OverRepresent_MultiPlot <- function(QueryDEGs, Listof_SignatureLists, Universe,
+                                    FDRCutoff = 0.05, MakeSquare = F, Silent = F,
+                                    UpperPVal = NULL, UpperOddsRatio = NULL,
+                                    OverlapNumbers = TRUE,FlipVertical = FALSE){
+  OverRep_Results = lapply(Listof_SignatureLists, OverRepresent_Results, QueryDEGs = QueryDEGs, Universe = Universe)
+
+  OverRep_Results %<>% unlist(recursive = F) %>% bind_rows()
+
+  if(is.null(UpperPVal)) UpperPVal = max(-log10(OverRep_Results$pvalue))
+  if(is.null(UpperOddsRatio)) UpperOddsRatio = max(log2(OverRep_Results$OddsRatio))
+  Widths = sapply(Listof_SignatureLists, length)
+  
+  MultiPlot = lapply(Listof_SignatureLists, OverRepresent_Plot, QueryDEGs = QueryDEGs, Universe = Universe,
+                     FDRCutoff = FDRCutoff, MakeSquare = MakeSquare, UpperPVal = UpperPVal, UpperOddsRatio = UpperOddsRatio,
+                     OverlapNumbers = OverlapNumbers, FlipVertical = FlipVertical)
+  
+  if(!Silent){
+    if(!FlipVertical) {
+      for(i in 2:length(MultiPlot)) MultiPlot[[i]] = MultiPlot[[i]] + theme(axis.text.y = element_blank())
+      plot_grid(plotlist = MultiPlot, rel_widths = Widths, align = "h",axis = "lb")
+    } else {
+      for(i in 2:length(MultiPlot)) MultiPlot[[i]] = MultiPlot[[i]] + theme(axis.text.x = element_blank())
+      plot_grid(plotlist = MultiPlot, nrow = length(MultiPlot),rel_heights = Widths, align = "v",axis = "lb")
+    }
+  } else{
+    MultiPlot
+  }
+}
 
 ########################################################################################################################
-## Overrepresentation Analysis Results
+## Overrepresentation Analysis Use Case
 
-max(log2(OverRepresent_OddsRatio(Hacohen_DEGs,YellowFever)))
-max(-log10(OverRepresent_PVal(Hacohen_DEGs,YellowFever)))
+OverRepresent_Plot(Hacohen_DEGs, YellowFever, HacohenAllGenes)
 
-HacohenDEG_PicPlot_Murine = PicnicPlot(Hacohen_DEGs[6:1],MurineSigs,FlipVertical = TRUE,
-                                       UpperPVal = 36,UpperOddsRatio = 5.2)
-
-
-HacohenDEG_PicPlot_YF = PicnicPlot(Hacohen_DEGs[6:1],YellowFever,FlipVertical = TRUE,
-                                   UpperOddsRatio = 4.7,UpperPVal = 61)
-HacohenDEG_PicPlot_YF$PicnicPlot
-
-cowplot::plot_grid(HacohenDEG_PicPlot_Murine$PicnicPlot,
-                   HacohenDEG_PicPlot_YF$PicnicPlot + theme(axis.text.x = element_blank()),
-                   nrow = 2,align = "v",rel_heights = c(1,0.2))
-
-
-
-Scale = 0.7
-
-pdf("4AB_OverrepresentionAnalysis_Hacohen_v4.pdf",width = 6.9*Scale,height = 10.45*Scale)
-cowplot::plot_grid(HacohenDEG_PicPlot_Murine$PicnicPlot,
-                   HacohenDEG_PicPlot_YF$PicnicPlot + theme(axis.text.x = element_blank()),
-                   nrow = 2,align = "v",rel_heights = c(1,0.2))
-dev.off()
-
-pdf("4AB_OverrepresentionAnalysis_Hacohen_v4Legend.pdf",width = 6.9*Scale,height = 30*Scale)
-cowplot::plot_grid(HacohenDEG_PicPlot_Murine$LegendPlot,
-                   HacohenDEG_PicPlot_YF$LegendPlot + theme(axis.text.x = element_blank()),
-                   nrow = 2,align = "v",rel_heights = c(1,0.2))
-dev.off()
+OverRepresent_MultiPlot(Hacohen_DEGs, list(MurineSigs, YellowFever), HacohenAllGenes)
