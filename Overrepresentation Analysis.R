@@ -133,7 +133,7 @@ OverRepresent_MultiPlot <- function(QueryDEGs, Listof_SignatureLists, Universe,
                                     OverlapNumbers = TRUE,FlipVertical = FALSE){
   OverRep_Results = lapply(Listof_SignatureLists, OverRepresent_Results, QueryDEGs = QueryDEGs, Universe = Universe)
 
-  OverRep_Results %<>% unlist(recursive = F) %>% bind_rows()
+  OverRep_Results %<>% unlist(recursive = F) %>% bind_rows() %>% subset(ID != "GeneUniverse")
 
   if(is.null(UpperPVal)) UpperPVal = max(-log10(OverRep_Results$pvalue))
   if(is.null(UpperOddsRatio)) UpperOddsRatio = max(log2(OverRep_Results$OddsRatio))
@@ -159,6 +159,8 @@ OverRepresent_MultiPlot <- function(QueryDEGs, Listof_SignatureLists, Universe,
 ########################################################################################################################
 ## Overrepresentation Analysis Use Case
 
+OverRepresent_Plot(Hacohen_DEGs, MurineSigs, HacohenAllGenes)
 OverRepresent_Plot(Hacohen_DEGs, YellowFever, HacohenAllGenes)
 
+## Allows you to plot them together
 OverRepresent_MultiPlot(Hacohen_DEGs, list(MurineSigs, YellowFever), HacohenAllGenes)
