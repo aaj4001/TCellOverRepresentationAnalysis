@@ -55,8 +55,6 @@ OverRepresent_Results <- function(QueryDEGs, SignatureList, Universe){
   OverRep_Result
 }
 
-
-
 OverRepresent_Plot <- function(QueryDEGs, SignatureList, Universe,
                                FDRCutoff = 0.05, MakeSquare = F,
                                UpperPVal = NULL, UpperOddsRatio = NULL,
@@ -80,22 +78,26 @@ OverRepresent_Plot <- function(QueryDEGs, SignatureList, Universe,
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,NA)) +
       scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) 
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
+      geom_point(size = 0, color = "black",fill = "black",show.legend = F)
   } else if (!is.null(UpperOddsRatio)&is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,NA)) +
       scale_color_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) 
+      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
+      geom_point(size = 0, color = "black",fill = "black",show.legend = F)
   } else if(is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,UpperPVal)) +
       scale_color_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
-      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) 
+      scale_fill_viridis(option = "plasma",direction = -1, limits = c(0,NA)) +
+      geom_point(size = 0, color = "black",fill = "black",show.legend = F)
   } else if(!is.null(UpperOddsRatio)&!is.null(UpperPVal)){
     PicPlot = PicPlot +
       scale_size_continuous(limits = c(0,UpperPVal)) +
       scale_color_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
-      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) 
+      scale_fill_viridis(option = "plasma",direction = -1,limits = c(0,UpperOddsRatio)) +
+      geom_point(size = 0, color = "black",fill = "black",show.legend = F)
   }  
   
   PicPlot = PicPlot + 
